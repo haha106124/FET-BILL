@@ -1,0 +1,15 @@
+{
+  "name": "AI 工地辨識助手",
+  "short_name": "工地辨識",
+  "description": "用姓名或手機相機掃描帳單信封，查找所屬工地。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1120",
+  "theme_color": "#0f172a",
+  "lang": "zh-Hant",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,13 @@
+node_modules/
+__pycache__/
+.venv/
+venv/
+.DS_Store
+
+# 明文名冊與來源 PDF 絕不進 repo —— 網站是公開的，放進來等於直接外洩。
+# 需要更新名冊時把 PDF 放回專案根目錄，跑 extract_pdf.py + encrypt_data.py 即可。
+data/directory.json
+data/*.xls
+data/*.xlsx
+data/*.csv
+*.pdf

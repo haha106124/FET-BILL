@@ -1,0 +1,69 @@
+name: Deploy to GitHub Pages
+
+# 先到 Settings → Pages 把 Source 設成 "GitHub Actions"，之後推到預設分支就會自動部署。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # 這個網站是公開的，任何被 commit 進來的檔案都會被原樣發佈出去。
+      # 明文名冊或來源 PDF 一旦混進來，登入畫面就完全形同虛設，所以直接讓建置失敗。
+      - name: 確認沒有外洩明文名冊
+        run: |
+          python3 - <<'PY'
+          import base64, json, sys
+          from pathlib import Path
+
+          leaks = [str(p) for p in Path('.').rglob('*')
+                   if p.is_file() and not str(p).startswith('.git/')
+                   and (p.suffix.lower() == '.pdf' or p.name == 'directory.json')]
+          if leaks:
+              sys.exit('明文資料不可發佈：' + '、'.join(leaks))
+
+          path = Path('data/directory.enc.json')
+          if not path.exists():
+              print('尚未設定加密電話表：僅發佈程式介面。')
+              raise SystemExit(0)
+
+          env = json.load(open(path, encoding='utf-8'))
+          for key in ('v', 'kdf', 'iterations', 'salt', 'iv', 'cipher', 'data'):
+              assert key in env, f'加密檔缺少 {key} 欄位'
+          assert env['cipher'] == 'AES-256-GCM', env['cipher']
+          assert env['iterations'] >= 100_000, f"PBKDF2 次數太少：{env['iterations']}"
+
+          blob = base64.b64decode(env['data'])
+          # 密文若混進可讀的中文，代表根本沒加密到
+          assert b'\xe9\x83\xad' not in blob and b'unitId' not in blob, '密文裡出現明文內容'
+          print(f"OK：密文 {len(blob) / 1024:.0f} KB、PBKDF2 {env['iterations']:,} 次")
+          PY
+
+      # 這一步若出現 "Get Pages site failed. Error: Not Found"，
+      # 代表 repo 還沒開啟 Pages —— 到 Settings → Pages 把 Source 設成
+      # "GitHub Actions" 再重跑即可。
+      # （不用 enablement: true，因為 GITHUB_TOKEN 沒有建立 Pages 站台的權限，
+      #   反而會蓋掉上面那個比較好懂的錯誤訊息。）
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4

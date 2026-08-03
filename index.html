@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AI 工地辨識助手</title>
+<meta name="description" content="用姓名或手機相機掃描帳單信封，查找所屬工地。">
+<meta name="theme-color" content="#0f172a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/icon.svg">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<!-- ─────────────── 登入 ─────────────── -->
+<div class="lockscreen" id="lockscreen" hidden>
+  <form class="lockbox" id="loginForm" autocomplete="on">
+    <div class="lock-mark" aria-hidden="true">✉</div>
+    <h2>AI 工地辨識助手</h2>
+    <p class="lock-sub">電話表已加密，請先登入</p>
+
+    <label class="field">
+      <span>帳號</span>
+      <input type="text" id="account" name="username" autocomplete="username"
+             autocapitalize="off" autocorrect="off" spellcheck="false" required>
+    </label>
+
+    <label class="field">
+      <span>密碼</span>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+    </label>
+
+    <label class="switch">
+      <input type="checkbox" id="rememberMe" checked>
+      <span>記住這台裝置</span>
+    </label>
+
+    <p class="lock-error" id="lockError" hidden></p>
+    <button class="btn btn-primary btn-lg" id="loginBtn" type="submit">登入</button>
+  </form>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">✉</span>
+    <div>
+      <h1>AI 工地辨識助手</h1>
+      <p class="brand-sub" id="sourceLine">載入中…</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="lockBtn" type="button" title="鎖定並登出" aria-label="鎖定並登出">🔒</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="切換深色／淺色" aria-label="切換深色／淺色">◐</button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab is-active" role="tab" aria-selected="true"  aria-controls="panel-search" id="tab-search">🔍 姓名／工地查詢</button>
+  <button class="tab"           role="tab" aria-selected="false" aria-controls="panel-camera" id="tab-camera">📷 相機掃描</button>
+  <button class="tab"           role="tab" aria-selected="false" aria-controls="panel-units"  id="tab-units">🏢 工地總覽</button>
+</nav>
+
+<main>
+  <!-- ─────────────── 姓名查詢 ─────────────── -->
+  <section class="panel is-active" id="panel-search" role="tabpanel" aria-labelledby="tab-search">
+    <div class="searchbar">
+      <input type="search" id="q" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="輸入姓名、電話、簡碼或工地…" aria-label="搜尋">
+      <button class="clear-btn" id="clearBtn" type="button" hidden aria-label="清除">✕</button>
+    </div>
+    <p class="hint" id="searchHint">可輸入部分姓名、簡碼、分機、手機末三碼或工地名稱。</p>
+
+    <div class="chips" id="recentChips" hidden>
+      <span class="chips-label">最近查詢</span>
+      <div class="chips-row" id="recentRow"></div>
+    </div>
+
+    <div id="searchResults" class="results"></div>
+  </section>
+
+  <!-- ─────────────── 拍照辨識 ─────────────── -->
+  <section class="panel" id="panel-camera" role="tabpanel" aria-labelledby="tab-camera">
+    <div class="camera-stage" id="cameraStage">
+      <video id="video" playsinline muted autoplay></video>
+      <div class="scan-frame" id="scanFrame"><span class="scan-line"></span></div>
+      <div class="camera-idle" id="cameraIdle">
+        <p class="camera-idle-icon">📷</p>
+        <p>對準帳單信封上的收件人姓名<br>系統會自動辨識並找出所屬工地</p>
+        <button class="btn btn-primary btn-lg" id="startCamBtn" type="button">啟動相機</button>
+        <label class="btn btn-ghost" for="photoInput">改用相簿／單張拍照</label>
+        <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
+      </div>
+    </div>
+
+    <div class="camera-bar" id="cameraBar" hidden>
+      <button class="btn" id="shotBtn" type="button">立即辨識</button>
+      <button class="btn" id="torchBtn" type="button" hidden>💡 補光</button>
+      <button class="btn" id="flipBtn" type="button" hidden>🔄 鏡頭</button>
+      <button class="btn btn-danger" id="stopCamBtn" type="button">停止</button>
+    </div>
+
+    <div class="ocr-status" id="ocrStatus" hidden>
+      <div class="progress"><span id="progressBar"></span></div>
+      <p id="ocrStatusText">準備中…</p>
+    </div>
+
+    <details class="ocr-debug" id="ocrDebug" hidden>
+      <summary>辨識到的文字</summary>
+      <pre id="ocrText"></pre>
+      <label class="switch">
+        <input type="checkbox" id="whitelistToggle" checked>
+        <span>只辨識名冊內出現過的字（大幅提高命中率）</span>
+      </label>
+    </details>
+
+    <div id="cameraResults" class="results"></div>
+  </section>
+
+  <!-- ─────────────── 工地總覽 ─────────────── -->
+  <section class="panel" id="panel-units" role="tabpanel" aria-labelledby="tab-units">
+    <div id="unitList" class="unit-list"></div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="vendor/tesseract/tesseract.min.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/matcher.js"></script>
+<script src="assets/ocr.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
