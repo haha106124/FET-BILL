@@ -28,9 +28,17 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'The phonebook could not be read.' }
 
   Write-Host ''
-  Write-Host 'Set the scanner password now. It is not shown while you type.'
-  & $python (Join-Path $PSScriptRoot 'encrypt_data.py') --account $Account --input $plainDirectory --output $encryptedDirectory
-  if ($LASTEXITCODE -ne 0) { throw 'Encrypted directory was not created.' }
+  $securePassword = Read-Host 'Set scanner password (input is hidden)' -AsSecureString
+  $passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+  try {
+    $env:FET_SCANNER_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
+    & $python (Join-Path $PSScriptRoot 'encrypt_data.py') --account $Account --input $plainDirectory --output $encryptedDirectory
+    if ($LASTEXITCODE -ne 0) { throw 'Encrypted directory was not created.' }
+  }
+  finally {
+    Remove-Item Env:FET_SCANNER_PASSWORD -ErrorAction SilentlyContinue
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
+  }
 
   Set-Location $repo
   & git add -- data/directory.enc.json
