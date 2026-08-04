@@ -191,6 +191,8 @@
     scanning: false,
     busy: false,
     votes: new Map(),
+    confirmed: new Map(),
+    acceptedCount: 0,
     locked: false,
     timer: null,
   };
@@ -243,6 +245,9 @@
 
     cam.locked = false;
     cam.votes.clear();
+    cam.confirmed.clear();
+    cam.acceptedCount = 0;
+    $('#liveMatch').hidden = true;
     cam.scanning = true;
     setOcrStatus('載入辨識引擎…', 0);
 
@@ -268,6 +273,7 @@
     $('#cameraBar').hidden = true;
     $('#ocrStatus').hidden = true;
     $('#cameraStage').classList.remove('is-live');
+    $('#liveMatch').hidden = true;
   }
 
   /**
@@ -314,7 +320,7 @@
     if (cam.busy || !video.videoWidth) return;
     cam.busy = true;
     try {
-      const canvas = OCR.preprocess(video, frameRect(video), manual ? 1400 : 1000);
+      const canvas = OCR.preprocess(video, frameRect(video), manual ? 1400 : 820);
       const whitelist = $('#whitelistToggle').checked ? matcher.charset : null;
       const { text } = await OCR.recognize(canvas, whitelist);
       $('#ocrText').textContent = text.trim() || '（沒有讀到文字）';
@@ -332,7 +338,7 @@
     cam.timer = setTimeout(async () => {
       if (!cam.locked) await scanOnce(false);
       scanLoop();
-    }, 1200);
+    }, 350);
   }
 
   /**
@@ -358,12 +364,31 @@
     const ranked = [...cam.votes.values()]
       .sort((a, b) => (b.best * 1.5 + b.hits) - (a.best * 1.5 + a.hits));
     const top = ranked[0];
-    const confident = manual || (top.best >= 0.95 && top.hits >= 2) || (top.hits >= 3);
+    const confident = manual || top.best >= 0.985 || (top.best >= 0.88 && top.hits >= 2);
 
     // 同名同姓（例如調動中的人）要一起列出，不能只挑一個
     renderResults($('#cameraResults'), ranked.slice(0, 6).map((v) => v.match), '');
 
     if (confident && !cam.locked) {
+      const key = top.match.person.name + '|' + top.match.person.unitId;
+      const now = Date.now();
+      const lastSeen = cam.confirmed.get(key) || 0;
+      if (now - lastSeen < 8000) return;
+
+      cam.confirmed.set(key, now);
+      for (const [oldKey, time] of cam.confirmed) {
+        if (now - time > 30000) cam.confirmed.delete(oldKey);
+      }
+      cam.acceptedCount += 1;
+      cam.votes.clear();
+      const live = $('#liveMatch');
+      live.innerHTML = `<strong>${escapeHtml(top.match.person.name)}</strong><span>${escapeHtml(top.match.person.unit)} · 已掃描 ${cam.acceptedCount} 筆</span>`;
+      live.hidden = false;
+      setOcrStatus(`已找到 ${top.match.person.name}，繼續自動掃描中`, 1);
+      pushRecent(top.match.person.name);
+      if (navigator.vibrate) navigator.vibrate([40, 35, 40]);
+      return;
+
       cam.locked = true;
       cam.scanning = false;
       clearTimeout(cam.timer);
