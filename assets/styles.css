@@ -374,14 +374,15 @@ main { padding: 16px; max-width: 880px; margin: 0 auto; }
   right: 12px;
   bottom: 14px;
   z-index: 4;
-  padding: 12px 14px;
+  min-height: 70px;
+  padding: 13px 16px;
   border-radius: 14px;
   color: #fff;
   background: rgba(12, 71, 49, .94);
   box-shadow: 0 8px 28px rgba(0, 0, 0, .32);
   animation: live-pop .18s ease-out;
 }
-.live-match strong { display: block; font-size: 20px; }
+.live-match strong { display: block; font-size: 22px; }
 .live-match span { display: block; margin-top: 2px; font-size: 14px; opacity: .92; }
 @keyframes live-pop { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 

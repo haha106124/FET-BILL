@@ -193,6 +193,7 @@
     votes: new Map(),
     confirmed: new Map(),
     acceptedCount: 0,
+    liveTimer: null,
     locked: false,
     timer: null,
   };
@@ -201,6 +202,12 @@
     $('#ocrStatus').hidden = false;
     $('#ocrStatusText').textContent = text;
     $('#progressBar').style.width = `${Math.round((progress || 0) * 100)}%`;
+  }
+
+  function showLiveScanning() {
+    const live = $('#liveMatch');
+    live.innerHTML = '<strong>正在掃描</strong><span>請把收件人姓名放入框內</span>';
+    live.hidden = false;
   }
 
   async function startCamera() {
@@ -247,7 +254,8 @@
     cam.votes.clear();
     cam.confirmed.clear();
     cam.acceptedCount = 0;
-    $('#liveMatch').hidden = true;
+    clearTimeout(cam.liveTimer);
+    showLiveScanning();
     cam.scanning = true;
     setOcrStatus('載入辨識引擎…', 0);
 
@@ -265,6 +273,7 @@
   function stopCamera() {
     cam.scanning = false;
     clearTimeout(cam.timer);
+    clearTimeout(cam.liveTimer);
     if (cam.stream) cam.stream.getTracks().forEach((t) => t.stop());
     cam.stream = null;
     cam.track = null;
@@ -369,7 +378,8 @@
     const confident = manual || top.best >= 0.985 || (top.best >= 0.88 && top.hits >= 2);
 
     // 同名同姓（例如調動中的人）要一起列出，不能只挑一個
-    renderResults($('#cameraResults'), ranked.slice(0, 6).map((v) => v.match), '');
+    if (manual) renderResults($('#cameraResults'), ranked.slice(0, 6).map((v) => v.match), '');
+    else $('#cameraResults').innerHTML = '';
 
     if (confident && !cam.locked) {
       const key = top.match.person.name + '|' + top.match.person.unitId;
@@ -386,6 +396,10 @@
       const live = $('#liveMatch');
       live.innerHTML = `<strong>${escapeHtml(top.match.person.name)}</strong><span>${escapeHtml(top.match.person.unit)} · 已掃描 ${cam.acceptedCount} 筆</span>`;
       live.hidden = false;
+      clearTimeout(cam.liveTimer);
+      cam.liveTimer = setTimeout(() => {
+        if (cam.scanning) showLiveScanning();
+      }, 2200);
       setOcrStatus(`已找到 ${top.match.person.name}，繼續自動掃描中`, 1);
       pushRecent(top.match.person.name);
       if (navigator.vibrate) navigator.vibrate([40, 35, 40]);
