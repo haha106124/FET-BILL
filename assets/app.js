@@ -280,7 +280,9 @@
    * 取出掃描框對應到影片畫面上的區域。
    * 實際裁切會比框線再往外多留一些，使用者不必對得很準。
    */
-  const FRAME_PAD = 0.12;
+  // Live scanning favours name recognition over a tiny, fast crop. Envelopes
+  // vary a lot, so include a generous area around the visible frame.
+  const FRAME_PAD = 0.18;
 
   function frameRect(video) {
     const vw = video.videoWidth;
@@ -320,7 +322,7 @@
     if (cam.busy || !video.videoWidth) return;
     cam.busy = true;
     try {
-      const canvas = OCR.preprocess(video, frameRect(video), manual ? 1400 : 820);
+      const canvas = OCR.preprocess(video, frameRect(video), manual ? 1600 : 1450);
       const whitelist = $('#whitelistToggle').checked ? matcher.charset : null;
       const { text } = await OCR.recognize(canvas, whitelist);
       $('#ocrText').textContent = text.trim() || '（沒有讀到文字）';
