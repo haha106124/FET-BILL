@@ -72,6 +72,7 @@
       const u = units.get(p.unitId) || {};
       return {
         ...p,
+        title: '', group: '', code: '', mobile: '', ext: '', note: '',
         address: u.address || '',
         unitTel: u.tel || '',
         unitFax: u.fax || '',

@@ -3,7 +3,7 @@
  * 名冊與介面在安裝時就快取；OCR 引擎（vendor/，約 9 MB）改成用到才快取，
  * 避免第一次開啟就下載一大包。
  */
-const VERSION = 'fet-bill-v1';
+const VERSION = 'fet-bill-v2';
 const SHELL = [
   './',
   'index.html',

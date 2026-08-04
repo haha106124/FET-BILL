@@ -24,6 +24,11 @@ except ImportError as exc:  # pragma: no cover - shown to the operator
 DEFAULT_SHEET = "\u4eba\u54e1\u806f\u7d61\u96fb\u8a71(\u5c0f)"
 NAME_RE = re.compile(r"^[\u3400-\u9fff]{2,6}$")
 HEADER_WORDS = {"\u8077\u7a31", "\u59d3\u540d", "\u7c21\u78bc", "\u884c\u52d5\u96fb\u8a71", "\u5206\u6a5f"}
+SITE_NAME_OVERRIDES = {
+    "MVPN:280": "\u9ad8\u6377RKC02",
+    "MVPN\uff1a280": "\u9ad8\u6377RKC02",
+    "MVPN\uff1a280\u3001281": "\u9ad8\u6377RKC02",
+}
 
 
 def clean(value: object) -> str:
@@ -36,6 +41,11 @@ def name_value(value: object) -> str:
     """Return a plausible Chinese recipient name, otherwise an empty string."""
     text = clean(value)
     return text if NAME_RE.fullmatch(text) and text not in HEADER_WORDS else ""
+
+
+def canonical_site_name(value: str) -> str:
+    """Apply confirmed manual corrections to site labels in the source sheet."""
+    return SITE_NAME_OVERRIDES.get(value, value)
 
 
 def unit_before_header(sheet: xlrd.sheet.Sheet, header_row: int, title_col: int) -> str:
@@ -93,13 +103,13 @@ def extract(source: Path, sheet_name: str, source_label: str) -> dict:
         if unit not in unit_ids:
             unit_id = f"unit-{len(unit_ids) + 1:02d}"
             unit_ids[unit] = unit_id
-            units.append({"id": unit_id, "name": unit, "address": "", "tel": "", "fax": "", "note": ""})
+            units.append({"id": unit_id, "name": unit})
         return unit_ids[unit]
 
     for row, col in headers:
         next_rows = [r for r in headers_by_col[col] if r > row]
         end_row = next_rows[0] if next_rows else sheet.nrows
-        unit = unit_before_header(sheet, row, col)
+        unit = canonical_site_name(unit_before_header(sheet, row, col))
         unit_id = get_unit_id(unit)
         for data_row in range(row + 1, end_row):
             person_name = name_value(sheet.cell_value(data_row, col + 1))
@@ -107,12 +117,6 @@ def extract(source: Path, sheet_name: str, source_label: str) -> dict:
                 continue
             people.append({
                 "name": person_name,
-                "title": clean(sheet.cell_value(data_row, col)),
-                "group": "",
-                "code": "",
-                "mobile": "",
-                "ext": "",
-                "note": "",
                 "unit": unit,
                 "unitId": unit_id,
             })
@@ -133,7 +137,7 @@ def validation_summary(directory: dict) -> dict:
         "duplicate_name_entries": sum(count - 1 for count in Counter(names).values() if count > 1),
         "unassigned_site_entries": sum(person["unit"] == "\u672a\u8a2d\u5b9a\u5de5\u5730" for person in directory["people"]),
         "invalid_unit_references": missing_unit,
-        "stored_fields": ["name", "title", "unit", "unitId"],
+        "stored_fields": ["name", "unit", "unitId"],
     }
 
 

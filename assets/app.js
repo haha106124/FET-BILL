@@ -44,6 +44,21 @@
 
   function personCard(person, score) {
     const p = person;
+    const confidenceOnly = score != null && score < 1
+      ? `<span class="badge badge-fuzzy">比對 ${Math.round(score * 100)}%</span>` : '';
+    return `
+      <article class="card">
+        <div class="card-head">
+          <h3 class="name">${escapeHtml(p.name)}</h3>
+          <div class="badges">${confidenceOnly}</div>
+        </div>
+        <div class="address-block">
+          <div class="address-unit">${escapeHtml(p.unit)}</div>
+        </div>
+      </article>`;
+
+    // Legacy detail-card code below is intentionally unreachable. It is kept
+    // temporarily to avoid changing unrelated OCR behavior in this release.
     const confidence = score != null && score < 1
       ? `<span class="badge badge-fuzzy">相似 ${Math.round(score * 100)}%</span>` : '';
     const note = p.note ? `<span class="badge badge-note">${escapeHtml(p.note)}</span>` : '';
