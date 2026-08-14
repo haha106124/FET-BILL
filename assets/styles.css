@@ -345,9 +345,9 @@ main { padding: 16px; max-width: 880px; margin: 0 auto; }
 
 .scan-frame {
   position: absolute;
-  left: 6%; right: 6%;
-  top: 24%;
-  height: 44%;
+  left: 4%; right: 4%;
+  top: 20%;
+  height: 52%;
   border: 2px solid rgba(255, 255, 255, .9);
   border-radius: 10px;
   box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .38);

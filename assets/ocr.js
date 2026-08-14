@@ -23,10 +23,12 @@
 
   const LANG = 'chi_tra';
   const OEM_LSTM_ONLY = 1;
-  // PSM 7 = 把裁切框當成「單行文字」；姓名通常只有一行，這比 PSM 6（整段文字）
-  // 更準。但使用者框得不夠準時，框裡可能混進上下兩行，這時才退回 PSM 6 重試。
-  const PSM_SINGLE_LINE = '7';
-  const PSM_SINGLE_BLOCK = '6';
+  // 實際帳單版面：郵遞區號＋地址＋公司名稱＋姓名是連在一起的 2-3 行文字，
+  // 姓名常常直接黏在地址或公司名稱那一行的尾端、沒有獨立成行。所以主要辨識
+  // 用「整段文字」把這 2-3 行一次讀出來，再交給模糊比對從整段文字裡找姓名；
+  // 沒讀到才重試「單欄變動字級」模式（郵遞區號常比地址行的字級/字體不同）。
+  const PSM_BLOCK = '6';
+  const PSM_COLUMN = '4';
 
   let worker = null;
   let initPromise = null;
@@ -79,6 +81,11 @@
 
     const radius = Math.max(10, Math.round(w / 16));
     const GAIN = 1.7;       // 對比放大倍率
+    // 遠傳帳單開窗裡的地址欄底下印著淺灰色的防偽底紋，光是拉對比會連底紋
+    // 一起放大、干擾辨識。KNEE 之後的值代表「原本就偏淺灰」，用更陡的曲線
+    // 把它們推向純白；KNEE 之前是「真的比較深」的筆畫，維持原本的灰階漸層。
+    const KNEE = 150;
+    const KNEE_GAIN = 2.4;
     let darkSum = 0;
     const out = new Float64Array(w * h);
     for (let y = 0; y < h; y++) {
@@ -93,8 +100,9 @@
                   - integral[(y1 + 1) * (w + 1) + x0]
                   + integral[y0 * (w + 1) + x0];
         const localMean = sum / count;
-        // 以區域平均亮度為基準拉開對比，但不硬切成純黑白
-        const v = Math.max(0, Math.min(255, 128 + (gray[y * w + x] - localMean) * GAIN));
+        let v = 128 + (gray[y * w + x] - localMean) * GAIN;
+        if (v > KNEE) v = KNEE + (v - KNEE) * KNEE_GAIN;
+        v = Math.max(0, Math.min(255, v));
         out[y * w + x] = v;
         darkSum += v;
       }
@@ -145,8 +153,8 @@
         try {
           onProgress && onProgress({ status: `載入辨識引擎（${src.name}）`, progress: 0, source: src.name });
           const w = await createWithSource(src, onProgress);
-          await w.setParameters({ tessedit_pageseg_mode: PSM_SINGLE_LINE });
-          appliedPsm = PSM_SINGLE_LINE;
+          await w.setParameters({ tessedit_pageseg_mode: PSM_BLOCK });
+          appliedPsm = PSM_BLOCK;
           worker = w;
           worker.__source = src.name;
           return worker;
@@ -165,8 +173,9 @@
   /**
    * 辨識一張畫布。
    * @param {HTMLCanvasElement} canvas 已前處理的影像
-   * @param {'line'|'block'} [mode='line'] 'line' = 單行（框住姓名時最準），
-   *   'block' = 整段文字（相簿照片、或框裡不小心混進兩行時的備援）
+   * @param {'block'|'column'} [mode='block'] 'block' = 整段文字（帳單地址欄的
+   *   郵遞區號＋地址＋公司＋姓名本來就是連在一起的 2-3 行，這是主要模式）；
+   *   'column' = 單欄變動字級（郵遞區號常比地址行字級不同時的備援重試）
    *
    * 註：曾經用 tessedit_char_whitelist 把辨識結果限制在名冊字集內，但
    * Tesseract 的 LSTM 引擎（本專案用的 OEM_LSTM_ONLY）不支援字元白名單
@@ -175,7 +184,7 @@
    */
   async function recognize(canvas, mode) {
     const w = await init();
-    const psm = mode === 'block' ? PSM_SINGLE_BLOCK : PSM_SINGLE_LINE;
+    const psm = mode === 'column' ? PSM_COLUMN : PSM_BLOCK;
     if (psm !== appliedPsm) {
       await w.setParameters({ tessedit_pageseg_mode: psm });
       appliedPsm = psm;

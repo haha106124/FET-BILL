@@ -147,7 +147,7 @@
     const live = $('#liveMatch');
     live.classList.remove('is-hit');
     live.classList.add('is-scanning');
-    live.innerHTML = '<span class="dot" aria-hidden="true"></span>正在掃描：把收件人姓名放進框內';
+    live.innerHTML = '<span class="dot" aria-hidden="true"></span>正在掃描：把整個地址欄放進框內';
     live.hidden = false;
   }
 
@@ -298,14 +298,16 @@
     try {
       const canvas = OCR.preprocess(video, frameRect(video), manual ? 1900 : 1650);
 
-      // 姓名通常只有一行，先用「單行」模式（比較準）。
-      let { text } = await OCR.recognize(canvas, 'line');
+      // 帳單地址欄本來就是郵遞區號＋地址＋公司＋姓名連在一起的 2-3 行，
+      // 姓名常常直接黏在地址或公司名稱那一行尾端，不是獨立一行，所以主要
+      // 辨識用整段文字模式把這幾行一次讀出來。
+      let { text } = await OCR.recognize(canvas, 'block');
       let matches = matcher.find(text, { minScore: 0.55, limit: 6 });
 
-      // 沒找到才重試「整段文字」模式：框裡可能不小心多裁到上下一行，
+      // 沒找到才重試「單欄變動字級」模式：郵遞區號那行字級常常跟地址行不同，
       // 只在第一次沒結果時才多花這次重試的時間，不拖慢平常的掃描節奏。
       if (!matches.length) {
-        const retry = await OCR.recognize(canvas, 'block');
+        const retry = await OCR.recognize(canvas, 'column');
         if (retry.text.trim()) {
           text = retry.text;
           matches = matcher.find(text, { minScore: 0.55, limit: 6 });
