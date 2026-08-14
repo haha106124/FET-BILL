@@ -23,20 +23,31 @@
 
   const LANG = 'chi_tra';
   const OEM_LSTM_ONLY = 1;
+  // PSM 7 = 把裁切框當成「單行文字」；姓名通常只有一行，這比 PSM 6（整段文字）
+  // 更準。但使用者框得不夠準時，框裡可能混進上下兩行，這時才退回 PSM 6 重試。
+  const PSM_SINGLE_LINE = '7';
   const PSM_SINGLE_BLOCK = '6';
 
   let worker = null;
   let initPromise = null;
-  let appliedWhitelist = null;
+  let appliedPsm = null;
 
   /* ── 影像前處理 ───────────────────────────────────────────────
-   * 手機拍出來的照片光線不均，直接丟進 OCR 命中率很差。
-   * 這裡做：灰階 → Bradley 自適應二值化（用積分影像算區域平均），
-   * 比全域門檻更能對付陰影與反光。
+   * 手機拍出來的照片光線不均，直接丟進 OCR 命中率很差，需要前處理。
+   *
+   * 這裡刻意「不」做非黑即白的二值化。Tesseract 4/5 的 LSTM 辨識引擎是拿
+   * 灰階／有邊緣灰階漸層的影像訓練的，实測把影像先二值化反而常常降低準確率
+   * （硬二值化會把筆劃邊緣的灰階細節整個抹掉，繁體中文筆劃多、細節密，傷害
+   * 更明顯）。所以改用「區域對比正規化」：用積分影像算出每個像素附近的區域
+   * 平均亮度當作背景基準，再把每個像素相對背景的差異放大——效果是陰影、反
+   * 光造成的亮度不均會被拉平，但字本身的灰階漸層與筆劃邊緣都保留下來，讓
+   * OCR 引擎自己去判斷，而不是我們先幫它（可能幫倒忙地）決定黑白。
    */
   function preprocess(source, rect, targetWidth = 1000) {
     const { sx, sy, sw, sh } = rect;
-    const scale = Math.min(3, Math.max(1, targetWidth / sw));
+    // 裁切框越小，越需要放大才有足夠的筆劃解析度；上限拉高到 4 倍，
+    // 讓「掃描框對到的小範圍名字」也能有夠高的有效解析度。
+    const scale = Math.min(4, Math.max(1, targetWidth / sw));
     const w = Math.round(sw * scale);
     const h = Math.round(sh * scale);
 
@@ -51,12 +62,12 @@
     const px = img.data;
 
     // 灰階
-    const gray = new Uint8ClampedArray(w * h);
+    const gray = new Float64Array(w * h);
     for (let i = 0, j = 0; i < px.length; i += 4, j++) {
       gray[j] = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000;
     }
 
-    // 積分影像
+    // 積分影像，用來快速算任意矩形範圍內的平均亮度（區域背景估計）
     const integral = new Float64Array((w + 1) * (h + 1));
     for (let y = 0; y < h; y++) {
       let rowSum = 0;
@@ -66,9 +77,10 @@
       }
     }
 
-    const radius = Math.max(8, Math.round(w / 24));
-    const t = 0.15;
-    let dark = 0;
+    const radius = Math.max(10, Math.round(w / 16));
+    const GAIN = 1.7;       // 對比放大倍率
+    let darkSum = 0;
+    const out = new Float64Array(w * h);
     for (let y = 0; y < h; y++) {
       const y0 = Math.max(0, y - radius);
       const y1 = Math.min(h - 1, y + radius);
@@ -80,18 +92,23 @@
                   - integral[y0 * (w + 1) + (x1 + 1)]
                   - integral[(y1 + 1) * (w + 1) + x0]
                   + integral[y0 * (w + 1) + x0];
-        const value = gray[y * w + x] * count < sum * (1 - t) ? 0 : 255;
-        if (value === 0) dark++;
-        const o = (y * w + x) * 4;
-        px[o] = px[o + 1] = px[o + 2] = value;
-        px[o + 3] = 255;
+        const localMean = sum / count;
+        // 以區域平均亮度為基準拉開對比，但不硬切成純黑白
+        const v = Math.max(0, Math.min(255, 128 + (gray[y * w + x] - localMean) * GAIN));
+        out[y * w + x] = v;
+        darkSum += v;
       }
     }
 
-    // 深色底、淺色字的話反轉，Tesseract 偏好白底黑字
-    if (dark > w * h * 0.55) {
-      for (let i = 0; i < px.length; i += 4) {
-        px[i] = px[i + 1] = px[i + 2] = 255 - px[i];
+    // 深色底、淺色字的話整體反轉，Tesseract 偏好白底黑字
+    const invert = (darkSum / (w * h)) < 118;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let v = out[y * w + x];
+        if (invert) v = 255 - v;
+        const o = (y * w + x) * 4;
+        px[o] = px[o + 1] = px[o + 2] = v;
+        px[o + 3] = 255;
       }
     }
 
@@ -128,7 +145,8 @@
         try {
           onProgress && onProgress({ status: `載入辨識引擎（${src.name}）`, progress: 0, source: src.name });
           const w = await createWithSource(src, onProgress);
-          await w.setParameters({ tessedit_pageseg_mode: PSM_SINGLE_BLOCK });
+          await w.setParameters({ tessedit_pageseg_mode: PSM_SINGLE_LINE });
+          appliedPsm = PSM_SINGLE_LINE;
           worker = w;
           worker.__source = src.name;
           return worker;
@@ -147,14 +165,20 @@
   /**
    * 辨識一張畫布。
    * @param {HTMLCanvasElement} canvas 已前處理的影像
-   * @param {string|null} whitelist 只允許出現的字元（名冊字集），null 表示不限制
+   * @param {'line'|'block'} [mode='line'] 'line' = 單行（框住姓名時最準），
+   *   'block' = 整段文字（相簿照片、或框裡不小心混進兩行時的備援）
+   *
+   * 註：曾經用 tessedit_char_whitelist 把辨識結果限制在名冊字集內，但
+   * Tesseract 的 LSTM 引擎（本專案用的 OEM_LSTM_ONLY）不支援字元白名單
+   * ——這是官方已確認的已知限制，設定了也不會生效——所以拿掉這個參數，
+   * 改把力氣放在真的有效的地方：影像前處理、解析度、PSM、模糊比對。
    */
-  async function recognize(canvas, whitelist) {
+  async function recognize(canvas, mode) {
     const w = await init();
-    const wl = whitelist || '';
-    if (wl !== appliedWhitelist) {
-      await w.setParameters({ tessedit_char_whitelist: wl });
-      appliedWhitelist = wl;
+    const psm = mode === 'block' ? PSM_SINGLE_BLOCK : PSM_SINGLE_LINE;
+    if (psm !== appliedPsm) {
+      await w.setParameters({ tessedit_pageseg_mode: psm });
+      appliedPsm = psm;
     }
     const { data } = await w.recognize(canvas);
     return { text: data.text || '', confidence: data.confidence || 0 };
@@ -166,7 +190,7 @@
     }
     worker = null;
     initPromise = null;
-    appliedWhitelist = null;
+    appliedPsm = null;
   }
 
   global.OCR = { init, recognize, preprocess, terminate, get source() { return worker && worker.__source; } };

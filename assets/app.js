@@ -24,26 +24,12 @@
     toastTimer = setTimeout(() => { el.hidden = true; }, 2200);
   }
 
-  async function copyText(text) {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast('已複製');
-    } catch (_) {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand('copy'); toast('已複製'); } catch (e) { toast('複製失敗'); }
-      ta.remove();
-    }
-  }
-
   /* ── 結果卡片 ───────────────────────────────────────────── */
 
   function personCard(person, score) {
     const p = person;
+    // 名冊只留姓名＋工地兩種資訊，卡片也只顯示這兩種——不顯示職稱、電話、
+    // 分機、地址等個資（即使名冊來源檔案裡還有，data.js 也已經先過濾掉）。
     const confidenceOnly = score != null && score < 1
       ? `<span class="badge badge-fuzzy">比對 ${Math.round(score * 100)}%</span>` : '';
     return `
@@ -55,55 +41,6 @@
         <div class="address-block">
           <div class="address-unit">${escapeHtml(p.unit)}</div>
         </div>
-      </article>`;
-
-    // Legacy detail-card code below is intentionally unreachable. It is kept
-    // temporarily to avoid changing unrelated OCR behavior in this release.
-    const confidence = score != null && score < 1
-      ? `<span class="badge badge-fuzzy">相似 ${Math.round(score * 100)}%</span>` : '';
-    const note = p.note ? `<span class="badge badge-note">${escapeHtml(p.note)}</span>` : '';
-    const title = p.title ? `<span class="badge">${escapeHtml(p.title)}</span>` : '';
-    const group = p.group ? `<span class="badge badge-soft">${escapeHtml(p.group)}</span>` : '';
-
-    const rows = [];
-    if (p.mobile) {
-      rows.push(`<div class="row"><span class="k">行動電話</span>
-        <a class="v link" href="tel:${escapeHtml(p.mobile.replace(/-/g, ''))}">${escapeHtml(p.mobile)}</a></div>`);
-    }
-    if (p.ext) {
-      const tel = p.unitTel ? p.unitTel.split(/[、,]/)[0].replace(/[()]/g, '') : '';
-      const href = tel ? `tel:${escapeHtml(tel.replace(/-/g, ''))},${escapeHtml(p.ext)}` : null;
-      rows.push(`<div class="row"><span class="k">分機</span>${href
-        ? `<a class="v link" href="${href}">${escapeHtml(p.ext)}</a>`
-        : `<span class="v">${escapeHtml(p.ext)}</span>`}</div>`);
-    }
-    if (p.code) rows.push(`<div class="row"><span class="k">簡碼</span><span class="v">${escapeHtml(p.code)}</span></div>`);
-    if (p.unitTel) rows.push(`<div class="row"><span class="k">單位電話</span><span class="v">${escapeHtml(p.unitTel)}</span></div>`);
-    if (p.unitFax) rows.push(`<div class="row"><span class="k">傳真</span><span class="v">${escapeHtml(p.unitFax)}</span></div>`);
-
-    const mailLabel = `${p.unit}　${p.name}${p.title ? ' ' + p.title : ''}\n${p.address}`;
-
-    return `
-      <article class="card">
-        <div class="card-head">
-          <h3 class="name">${escapeHtml(p.name)}</h3>
-          <div class="badges">${title}${group}${note}${confidence}</div>
-        </div>
-
-        <div class="address-block">
-          <div class="address-label">收件單位 · 地址</div>
-          <div class="address-unit">${escapeHtml(p.unit)}</div>
-          <div class="address-text">${escapeHtml(p.address || '（名冊未載明地址）')}</div>
-          <div class="address-actions">
-            <button class="btn btn-sm" data-copy="${escapeHtml(p.address)}">複製地址</button>
-            <button class="btn btn-sm" data-copy="${escapeHtml(mailLabel)}">複製整組</button>
-            ${p.address ? `<a class="btn btn-sm" target="_blank" rel="noopener"
-                 href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.address)}">地圖</a>` : ''}
-          </div>
-        </div>
-
-        <div class="rows">${rows.join('')}</div>
-        ${p.unitNote ? `<p class="unit-note">${escapeHtml(p.unitNote)}</p>` : ''}
       </article>`;
   }
 
@@ -163,19 +100,11 @@
         <summary>
           <span class="unit-name">${escapeHtml(u.name)}</span>
           <span class="unit-count">${u.people.length} 人</span>
-          <span class="unit-addr">${escapeHtml(u.address)}</span>
         </summary>
         <div class="unit-body">
-          <div class="unit-meta">
-            ${u.tel ? `<div><span class="k">電話</span><span class="v">${escapeHtml(u.tel)}</span></div>` : ''}
-            ${u.fax ? `<div><span class="k">傳真</span><span class="v">${escapeHtml(u.fax)}</span></div>` : ''}
-            ${u.note ? `<div><span class="k">備註</span><span class="v">${escapeHtml(u.note)}</span></div>` : ''}
-            <button class="btn btn-sm" data-copy="${escapeHtml(u.address)}">複製地址</button>
-          </div>
           <div class="people-grid">
             ${u.people.map((p) => `<button class="person-chip" data-q="${escapeHtml(p.name)}">
                 <span class="pc-name">${escapeHtml(p.name)}</span>
-                <span class="pc-sub">${escapeHtml(p.group || p.title || '')}</span>
               </button>`).join('')}
           </div>
         </div>
@@ -184,18 +113,27 @@
 
   /* ── 相機辨識 ───────────────────────────────────────────── */
 
+  // 用「最近幾張影格」的小視窗投票，而不是整段掃描期間無限累積：
+  // 換下一封信之後，舊信封的分數只要幾張影格就會被擠出視窗，
+  // 新信封不用等很久就能被辨識出來，也不會被舊資料拖累。
+  const VOTE_WINDOW = 3;
+  // 同一人多久內不重複跳出大字結果（使用者手還沒把信移開時避免一直彈）。
+  const CONFIRM_COOLDOWN_MS = 5000;
+  // 大字結果顯示多久後自動收回、換回「正在掃描」（換下一封信前這裡一定會清空）。
+  const HIT_DISPLAY_MS = 1500;
+
   const cam = {
     stream: null,
     track: null,
     facing: 'environment',
     scanning: false,
     busy: false,
-    votes: new Map(),
-    confirmed: new Map(),
+    recentFrames: [],     // 最近幾張影格的比對結果（陣列的陣列）
+    confirmed: new Map(), // key -> 上次跳出大字結果的時間
     acceptedCount: 0,
     liveTimer: null,
-    locked: false,
     timer: null,
+    torchOn: false,
   };
 
   function setOcrStatus(text, progress) {
@@ -204,10 +142,26 @@
     $('#progressBar').style.width = `${Math.round((progress || 0) * 100)}%`;
   }
 
+  /** 待機／掃描中：畫面上方一個小提示，不擋住掃描框。 */
   function showLiveScanning() {
     const live = $('#liveMatch');
-    live.innerHTML = '<strong>正在掃描</strong><span>請把收件人姓名放入框內</span>';
+    live.classList.remove('is-hit');
+    live.classList.add('is-scanning');
+    live.innerHTML = '<span class="dot" aria-hidden="true"></span>正在掃描：把收件人姓名放進框內';
     live.hidden = false;
+  }
+
+  /** 辨識成功：相機畫面上直接跳出大字姓名＋工地，不用捲動、不用按任何按鈕。 */
+  function showLiveHit(person) {
+    const live = $('#liveMatch');
+    live.classList.remove('is-scanning');
+    live.classList.add('is-hit');
+    live.innerHTML =
+      `<strong>${escapeHtml(person.name)}</strong><span>${escapeHtml(person.unit)}</span>`;
+    live.hidden = false;
+    clearTimeout(cam.liveTimer);
+    cam.liveTimer = setTimeout(() => { if (cam.scanning) showLiveScanning(); }, HIT_DISPLAY_MS);
+    setOcrStatus(`已掃描 ${cam.acceptedCount} 筆 · 繼續自動掃描中`, 1);
   }
 
   async function startCamera() {
@@ -223,8 +177,10 @@
       cam.stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: cam.facing },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          // 解析度盡量拉高：信封上的姓名字塊通常只占畫面一小塊，
+          // 來源解析度越高，裁切出來的那一小塊才有足夠的像素可用。
+          width: { ideal: 2560 },
+          height: { ideal: 1440 },
         },
         audio: false,
       });
@@ -250,8 +206,17 @@
       $('#flipBtn').hidden = ds.filter((d) => d.kind === 'videoinput').length < 2;
     }).catch(() => {});
 
-    cam.locked = false;
-    cam.votes.clear();
+    // 近距離對著信封上的字，手機預設對焦／曝光策略常常對不準；
+    // 支援的裝置（多半是 Android Chrome）就請它持續自動對焦與自動曝光。
+    // iOS Safari 不開放這個 API，會直接被 catch 掉，不影響其他功能。
+    if (caps.focusMode && caps.focusMode.includes('continuous')) {
+      cam.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+    }
+    if (caps.exposureMode && caps.exposureMode.includes('continuous')) {
+      cam.track.applyConstraints({ advanced: [{ exposureMode: 'continuous' }] }).catch(() => {});
+    }
+
+    cam.recentFrames = [];
     cam.confirmed.clear();
     cam.acceptedCount = 0;
     clearTimeout(cam.liveTimer);
@@ -289,9 +254,9 @@
    * 取出掃描框對應到影片畫面上的區域。
    * 實際裁切會比框線再往外多留一些，使用者不必對得很準。
    */
-  // Live scanning favours name recognition over a tiny, fast crop. Envelopes
-  // vary a lot, so include a generous area around the visible frame.
-  const FRAME_PAD = 0.18;
+  // 手持手機快速連續掃 200~300 封信，框很難每次都對得剛剛好，
+  // 留白拉大一點比較不會因為手震、信封位置偏一點就整個裁不到姓名。
+  const FRAME_PAD = 0.24;
 
   function frameRect(video) {
     const vw = video.videoWidth;
@@ -331,11 +296,24 @@
     if (cam.busy || !video.videoWidth) return;
     cam.busy = true;
     try {
-      const canvas = OCR.preprocess(video, frameRect(video), manual ? 1600 : 1450);
-      const whitelist = $('#whitelistToggle').checked ? matcher.charset : null;
-      const { text } = await OCR.recognize(canvas, whitelist);
+      const canvas = OCR.preprocess(video, frameRect(video), manual ? 1900 : 1650);
+
+      // 姓名通常只有一行，先用「單行」模式（比較準）。
+      let { text } = await OCR.recognize(canvas, 'line');
+      let matches = matcher.find(text, { minScore: 0.55, limit: 6 });
+
+      // 沒找到才重試「整段文字」模式：框裡可能不小心多裁到上下一行，
+      // 只在第一次沒結果時才多花這次重試的時間，不拖慢平常的掃描節奏。
+      if (!matches.length) {
+        const retry = await OCR.recognize(canvas, 'block');
+        if (retry.text.trim()) {
+          text = retry.text;
+          matches = matcher.find(text, { minScore: 0.55, limit: 6 });
+        }
+      }
+
       $('#ocrText').textContent = text.trim() || '（沒有讀到文字）';
-      handleOcrText(text, manual);
+      handleOcrText(matches, manual);
     } catch (err) {
       console.error(err);
       setOcrStatus(`辨識失敗：${err.message}`, 0);
@@ -347,85 +325,74 @@
   function scanLoop() {
     if (!cam.scanning) return;
     cam.timer = setTimeout(async () => {
-      if (!cam.locked) await scanOnce(false);
+      await scanOnce(false);
       scanLoop();
     }, 350);
   }
 
   /**
-   * 累計連續幾張影格的辨識結果再決定，避免單張誤判造成畫面跳動。
+   * 累計「最近幾張」影格的辨識結果再決定，避免單張誤判造成畫面跳動；
+   * 視窗只保留最近幾張，換下一封信之後舊信封的分數很快就會被擠出去，
+   * 不需要按任何按鈕、不需要停止相機，新信封出現就能盡快被辨識出來。
    */
-  function handleOcrText(text, manual) {
-    const matches = matcher.find(text, { minScore: 0.55, limit: 6 });
+  function handleOcrText(matches, manual) {
     if (!matches.length) {
       if (manual) toast('框內沒有辨識到名冊中的姓名');
       return;
     }
 
-    for (const m of matches) {
-      const key = m.person.name + '|' + m.person.unitId;
-      const v = cam.votes.get(key) || { hits: 0, best: 0, match: m };
-      v.hits += 1;
-      v.best = Math.max(v.best, m.score);
-      v.match = m;
-      cam.votes.set(key, v);
+    if (!manual) {
+      cam.recentFrames.push(matches);
+      if (cam.recentFrames.length > VOTE_WINDOW) cam.recentFrames.shift();
+    }
+    const frames = manual ? [matches] : cam.recentFrames;
+
+    const tally = new Map();
+    for (const frameMatches of frames) {
+      for (const m of frameMatches) {
+        const key = m.person.name + '|' + m.person.unitId;
+        const v = tally.get(key) || { hits: 0, best: 0, match: m };
+        v.hits += 1;
+        v.best = Math.max(v.best, m.score);
+        v.match = m;
+        tally.set(key, v);
+      }
     }
 
-    // 用累計票數排序而不是單張結果，畫面才不會每掃一次就跳一次
-    const ranked = [...cam.votes.values()]
+    const ranked = [...tally.values()]
       .sort((a, b) => (b.best * 1.5 + b.hits) - (a.best * 1.5 + a.hits));
     const top = ranked[0];
-    const confident = manual || top.best >= 0.985 || (top.best >= 0.88 && top.hits >= 2);
+    // 幾乎完全吻合就直接採用；分數略低則要求連續兩張影格都認得同一個人再採用。
+    const confident = manual || top.best >= 0.98 || (top.best >= 0.85 && top.hits >= 2);
 
     // 同名同姓（例如調動中的人）要一起列出，不能只挑一個
     if (manual) renderResults($('#cameraResults'), ranked.slice(0, 6).map((v) => v.match), '');
-    else $('#cameraResults').innerHTML = '';
 
-    if (confident && !cam.locked) {
-      const key = top.match.person.name + '|' + top.match.person.unitId;
-      const now = Date.now();
-      const lastSeen = cam.confirmed.get(key) || 0;
-      if (now - lastSeen < 8000) return;
+    if (!confident) return;
 
-      cam.confirmed.set(key, now);
-      for (const [oldKey, time] of cam.confirmed) {
-        if (now - time > 30000) cam.confirmed.delete(oldKey);
-      }
-      cam.acceptedCount += 1;
-      cam.votes.clear();
-      const live = $('#liveMatch');
-      live.innerHTML = `<strong>${escapeHtml(top.match.person.name)}</strong><span>${escapeHtml(top.match.person.unit)} · 已掃描 ${cam.acceptedCount} 筆</span>`;
-      live.hidden = false;
-      clearTimeout(cam.liveTimer);
-      cam.liveTimer = setTimeout(() => {
-        if (cam.scanning) showLiveScanning();
-      }, 2200);
-      setOcrStatus(`已找到 ${top.match.person.name}，繼續自動掃描中`, 1);
-      pushRecent(top.match.person.name);
-      if (navigator.vibrate) navigator.vibrate([40, 35, 40]);
-      return;
+    // 同一封信不要一直重複跳出：同一個人短時間內只提示一次
+    const key = top.match.person.name + '|' + top.match.person.unitId;
+    const now = Date.now();
+    const lastSeen = cam.confirmed.get(key) || 0;
+    if (now - lastSeen < CONFIRM_COOLDOWN_MS) return;
 
-      cam.locked = true;
-      cam.scanning = false;
-      clearTimeout(cam.timer);
-      setOcrStatus(`已鎖定：${top.match.person.name}（點「立即辨識」可重新掃描）`, 1);
-      pushRecent(top.match.person.name);
-      if (navigator.vibrate) navigator.vibrate(60);
-      $('#cameraResults').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    cam.confirmed.set(key, now);
+    for (const [oldKey, time] of cam.confirmed) {
+      if (now - time > CONFIRM_COOLDOWN_MS * 4) cam.confirmed.delete(oldKey);
     }
+    cam.acceptedCount += 1;
+    cam.recentFrames = [];   // 這封信已經確認，投票視窗歸零，準備讀下一封
+
+    showLiveHit(top.match.person);
+    pushRecent(top.match.person.name);
+    if (navigator.vibrate) navigator.vibrate([40, 35, 40]);
   }
 
-  /** 使用者按「立即辨識」：解除鎖定並立刻拍一張高解析度的來辨識。 */
+  /** 使用者按「立即辨識」：立刻拍一張高解析度的來辨識，相機持續運作不受影響。 */
   async function manualShot() {
-    cam.votes.clear();
-    cam.locked = false;
     setOcrStatus('辨識中…', 0.4);
     await scanOnce(true);
-    if (!cam.locked) {
-      setOcrStatus('掃描中：請把姓名放進框內', 1);
-      cam.scanning = true;
-      scanLoop();
-    }
+    setOcrStatus('掃描中：請把姓名放進框內', 1);
   }
 
   /** 從相簿選圖或單張拍照（不支援 getUserMedia 時的備援）。 */
@@ -438,9 +405,9 @@
       try {
         await OCR.init((m) => setOcrStatus(`${m.status}（${m.source}）`, m.progress));
         setOcrStatus('辨識中…', 0.5);
-        const canvas = OCR.preprocess(img, { sx: 0, sy: 0, sw: img.width, sh: img.height }, 1600);
-        const whitelist = $('#whitelistToggle').checked ? matcher.charset : null;
-        const { text } = await OCR.recognize(canvas, whitelist);
+        const canvas = OCR.preprocess(img, { sx: 0, sy: 0, sw: img.width, sh: img.height }, 1900);
+        // 整張照片通常含多行（地址、姓名等），用「整段文字」模式。
+        const { text } = await OCR.recognize(canvas, 'block');
         $('#ocrText').textContent = text.trim() || '（沒有讀到文字）';
         const matches = matcher.find(text, { minScore: 0.55, limit: 8 });
         renderResults($('#cameraResults'), matches,
@@ -515,10 +482,7 @@
       try { localStorage.setItem(THEME_KEY, next); } catch (_) { /* ignore */ }
     });
 
-    // 複製按鈕與「點名字轉去查詢」共用一個事件代理
     document.addEventListener('click', (e) => {
-      const copyBtn = e.target.closest('[data-copy]');
-      if (copyBtn) { copyText(copyBtn.dataset.copy); return; }
       const qBtn = e.target.closest('[data-q]');
       if (qBtn) {
         showTab('search');

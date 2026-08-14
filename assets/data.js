@@ -65,24 +65,25 @@
     return JSON.parse(new TextDecoder().decode(plain));
   }
 
-  /** 把單位的地址／電話接到每個人身上，並統計各單位人數。 */
+  /**
+   * 只保留「姓名＋工地」。
+   *
+   * 就算加密前的來源檔（例如舊版 extract_pdf.py 產出的版本）裡還留著職稱、
+   * 簡碼、手機、分機、地址、電話等欄位，這裡也一律丟棄、不放進記憶體 ——
+   * 不只是不顯示，是連 window 除錯物件、DevTools 主控台都看不到。
+   * 之後要新增欄位，請同時更新這裡與 UI，不要讓多餘欄位悄悄流進畫面。
+   */
   function build(raw) {
-    const units = new Map(raw.units.map((u) => [u.id, u]));
-    const people = raw.people.map((p) => {
-      const u = units.get(p.unitId) || {};
-      return {
-        ...p,
-        title: '', group: '', code: '', mobile: '', ext: '', note: '',
-        address: u.address || '',
-        unitTel: u.tel || '',
-        unitFax: u.fax || '',
-        unitNote: u.note || '',
-      };
-    });
-    for (const u of raw.units) {
-      u.people = people.filter((p) => p.unitId === u.id);
-    }
-    return { source: raw.source, units: raw.units, people };
+    const units = raw.units.map((u) => ({ id: u.id, name: u.name, people: [] }));
+    const unitById = new Map(units.map((u) => [u.id, u]));
+    const people = raw.people
+      .filter((p) => p.name && p.unitId && unitById.has(p.unitId))
+      .map((p) => {
+        const u = unitById.get(p.unitId);
+        return { name: p.name, unitId: u.id, unit: u.name };
+      });
+    for (const p of people) unitById.get(p.unitId).people.push(p);
+    return { source: raw.source, units, people };
   }
 
   /* ── 記住這台裝置 ─────────────────────────────────────────

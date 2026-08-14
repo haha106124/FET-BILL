@@ -279,17 +279,14 @@ main { padding: 16px; max-width: 880px; margin: 0 auto; }
   white-space: nowrap;
 }
 .badge-soft { background: var(--surface-2); color: var(--muted); }
-.badge-note { background: #fff2d8; color: #92400e; }
 .badge-fuzzy { background: #fee2e2; color: #b91c1c; }
 
-:root[data-theme="dark"] .badge-note { background: #3a2c12; color: #fbbf24; }
 :root[data-theme="dark"] .badge-fuzzy { background: #3b1d1d; color: #fca5a5; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .badge-note { background: #3a2c12; color: #fbbf24; }
   :root:not([data-theme="light"]) .badge-fuzzy { background: #3b1d1d; color: #fca5a5; }
 }
 
-/* 地址是這個工具的主角，給它最重的視覺份量 */
+/* 工地名稱是查詢結果的重點，卡片只顯示姓名＋工地兩種資訊 */
 .address-block {
   margin-top: 12px;
   padding: 12px 14px;
@@ -298,18 +295,7 @@ main { padding: 16px; max-width: 880px; margin: 0 auto; }
   border-left: 4px solid var(--accent);
   border-radius: 10px;
 }
-.address-label { font-size: 11.5px; color: var(--muted); letter-spacing: .06em; }
-.address-unit { font-size: 15px; font-weight: 600; margin-top: 2px; }
-.address-text { font-size: 16px; margin-top: 4px; word-break: break-all; }
-.address-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-
-.rows { margin-top: 12px; display: grid; gap: 4px; }
-.row { display: flex; gap: 12px; font-size: 14.5px; }
-.row .k { flex: none; width: 68px; color: var(--muted); font-size: 13px; }
-.row .v { word-break: break-all; }
-.link { color: var(--accent); text-decoration: none; }
-
-.unit-note { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
+.address-unit { font-size: 15px; font-weight: 600; }
 
 .empty { padding: 28px 16px; text-align: center; color: var(--muted); }
 .empty p { margin: 0 0 6px; }
@@ -345,7 +331,9 @@ main { padding: 16px; max-width: 880px; margin: 0 auto; }
 .camera-stage {
   position: relative;
   aspect-ratio: 3 / 4;
-  max-height: 62vh;
+  /* dvh 會扣掉手機瀏覽器網址列／工具列的高度，比 vh 更貼近實際可視範圍，
+     讓相機畫面＋大字結果盡量填滿第一屏，不必往下滑就能看到辨識結果。 */
+  max-height: min(72dvh, 72vh);
   margin: 0 auto;
   background: #000;
   border-radius: var(--radius);
@@ -357,9 +345,9 @@ main { padding: 16px; max-width: 880px; margin: 0 auto; }
 
 .scan-frame {
   position: absolute;
-  left: 8%; right: 8%;
-  top: 25%;
-  height: 40%;
+  left: 6%; right: 6%;
+  top: 24%;
+  height: 44%;
   border: 2px solid rgba(255, 255, 255, .9);
   border-radius: 10px;
   box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .38);
@@ -368,23 +356,51 @@ main { padding: 16px; max-width: 880px; margin: 0 auto; }
 }
 .camera-stage.is-live .scan-frame { display: block; }
 
+/* 相機畫面上的即時結果——待機時是不擋畫面的小提示，
+   辨識成功時整個換成置中大字，兩種狀態切換靠 class 而不是重新排版。 */
 .live-match {
   position: absolute;
   left: 12px;
   right: 12px;
-  bottom: 14px;
   z-index: 4;
-  min-height: 70px;
-  padding: 13px 16px;
-  border-radius: 14px;
   color: #fff;
-  background: rgba(12, 71, 49, .94);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .32);
-  animation: live-pop .18s ease-out;
+  pointer-events: none;
 }
-.live-match strong { display: block; font-size: 22px; }
-.live-match span { display: block; margin-top: 2px; font-size: 14px; opacity: .92; }
-@keyframes live-pop { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+.live-match.is-scanning {
+  top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  margin: 0 auto;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  background: rgba(15, 23, 42, .55);
+  backdrop-filter: blur(2px);
+}
+.live-match.is-scanning .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #34d399;
+  animation: dot-pulse 1.1s ease-in-out infinite;
+}
+@keyframes dot-pulse { 0%, 100% { opacity: .4; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.15); } }
+
+.live-match.is-hit {
+  top: 50%;
+  transform: translateY(-50%);
+  text-align: center;
+  padding: 22px 20px;
+  border-radius: 20px;
+  background: rgba(4, 47, 32, .94);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, .4);
+  animation: live-pop .2s ease-out;
+}
+.live-match.is-hit strong { display: block; font-size: 40px; line-height: 1.25; letter-spacing: .04em; }
+.live-match.is-hit span { display: block; margin-top: 6px; font-size: 18px; opacity: .95; }
+@keyframes live-pop { from { opacity: 0; transform: translateY(-50%) scale(.92); } to { opacity: 1; transform: translateY(-50%) scale(1); } }
 
 .scan-line {
   position: absolute;
@@ -412,7 +428,7 @@ main { padding: 16px; max-width: 880px; margin: 0 auto; }
 .camera-idle-icon { font-size: 40px; }
 .camera-idle .btn-ghost { color: #93a5c4; }
 
-/* 鎖定結果後畫面會捲到卡片，控制列黏在底部才不用捲回去拍下一封 */
+/* 相機一直開著、連續掃 200~300 封信，控制列黏在底部，滑到哪都不用捲回去按 */
 .camera-bar {
   display: flex;
   flex-wrap: wrap;
@@ -467,16 +483,12 @@ main { padding: 16px; max-width: 880px; margin: 0 auto; }
 .unit summary::-webkit-details-marker { display: none; }
 .unit-name { font-size: 16px; font-weight: 600; }
 .unit-count { font-size: 12.5px; color: var(--muted); }
-.unit-addr { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
 
-.unit-body { padding: 0 16px 16px; border-top: 1px solid var(--border); }
-.unit-meta { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 0; font-size: 13.5px; }
-.unit-meta .k { color: var(--muted); margin-right: 6px; font-size: 12.5px; }
+.unit-body { padding: 12px 16px 16px; border-top: 1px solid var(--border); }
 
 .people-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-.person-chip { display: grid; text-align: left; padding: 6px 13px; }
+.person-chip { padding: 6px 13px; }
 .pc-name { font-size: 15px; letter-spacing: .06em; }
-.pc-sub { font-size: 11px; color: var(--muted); }
 
 /* ── 提示 ─────────────────────────────────────────────── */
 

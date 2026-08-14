@@ -121,7 +121,7 @@
     }
 
     /**
-     * 搜尋框用：先做「包含」比對（姓名／簡碼／分機／手機／單位／組別／職稱），
+     * 搜尋框用：先做「包含」比對（姓名／工地，名冊只有這兩種資訊），
      * 沒結果時再退回容錯比對，打錯字也找得到。
      */
     search(query, limit = 200) {
@@ -134,13 +134,7 @@
         if (p.name === q) s = 100;
         else if (p.name.startsWith(q)) s = 90;
         else if (p.name.includes(q)) s = 80;
-        else if (p.code === q || p.ext === q) s = 75;
-        else if (normalize(p.mobile).replace(/-/g, '').includes(q.replace(/-/g, '')) && q.length >= 3) s = 70;
-        else if (p.code.includes(q) || p.ext.includes(q)) s = 55;
-        else {
-          const hay = normalize(p.unit + p.group + p.title);
-          if (hay.toLowerCase().includes(q.toLowerCase())) s = 50;
-        }
+        else if (normalize(p.unit).toLowerCase().includes(q.toLowerCase())) s = 50;
         if (s) scored.push({ person: p, score: s / 100, matched: q });
       }
 
