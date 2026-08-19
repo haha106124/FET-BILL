@@ -116,11 +116,18 @@
   // 用「最近幾張影格」的小視窗投票，而不是整段掃描期間無限累積：
   // 換下一封信之後，舊信封的分數只要幾張影格就會被擠出視窗，
   // 新信封不用等很久就能被辨識出來，也不會被舊資料拖累。
-  const VOTE_WINDOW = 3;
+  const VOTE_WINDOW = 2;
   // 同一人多久內不重複跳出大字結果（使用者手還沒把信移開時避免一直彈）。
   const CONFIRM_COOLDOWN_MS = 5000;
   // 大字結果顯示多久後自動收回、換回「正在掃描」（換下一封信前這裡一定會清空）。
   const HIT_DISPLAY_MS = 1500;
+  const FAST_TARGET_WIDTH = 1180;
+  const PRECISE_TARGET_WIDTH = 1800;
+  const QUALITY_INTERVAL_MS = 150;
+  const MOTION_RESET_THRESHOLD = 19;
+  const MIN_BRIGHTNESS = 54;
+  const MAX_BRIGHTNESS = 238;
+  const MIN_SHARPNESS = 7;
 
   const cam = {
     stream: null,
@@ -133,6 +140,9 @@
     acceptedCount: 0,
     liveTimer: null,
     timer: null,
+    qualityTimer: null,
+    scanId: 0,
+    quality: { previous: null, stableFrames: 0, ready: false, brightness: 0, sharpness: 0 },
     torchOn: false,
   };
 
@@ -143,11 +153,11 @@
   }
 
   /** 待機／掃描中：畫面上方一個小提示，不擋住掃描框。 */
-  function showLiveScanning() {
+  function showLiveScanning(message = '正在掃描：把整個地址欄放進框內') {
     const live = $('#liveMatch');
     live.classList.remove('is-hit');
     live.classList.add('is-scanning');
-    live.innerHTML = '<span class="dot" aria-hidden="true"></span>正在掃描：把整個地址欄放進框內';
+    live.innerHTML = `<span class="dot" aria-hidden="true"></span>${escapeHtml(message)}`;
     live.hidden = false;
   }
 
@@ -162,6 +172,68 @@
     clearTimeout(cam.liveTimer);
     cam.liveTimer = setTimeout(() => { if (cam.scanning) showLiveScanning(); }, HIT_DISPLAY_MS);
     setOcrStatus(`已掃描 ${cam.acceptedCount} 筆 · 繼續自動掃描中`, 1);
+  }
+
+  function beginNextEnvelope(message = '等待下一封，請停穩…') {
+    cam.scanId += 1;
+    cam.recentFrames = [];
+    cam.confirmed.clear();
+    cam.quality.stableFrames = 0;
+    clearTimeout(cam.liveTimer);
+    $('#cameraResults').innerHTML = '';
+    showLiveScanning(message);
+    setOcrStatus(message, 0);
+  }
+
+  /**
+   * 每 150ms 只看掃描框內的極小預覽圖。它不做 OCR，而是用來判斷：
+   * 1. 是否已換下一封信（舊 OCR 結果必須失效）；2. 是否夠穩、夠亮、夠清楚。
+   */
+  function sampleFrameQuality() {
+    const video = $('#video');
+    if (!cam.scanning || !video.videoWidth) return;
+    const rect = frameRect(video, 0.06);
+    const w = 72, h = 48;
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(video, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    const luma = new Uint8Array(w * h);
+    let sum = 0, edge = 0, motion = 0;
+    for (let i = 0, j = 0; i < px.length; i += 4, j++) {
+      const value = Math.round((px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000);
+      luma[j] = value;
+      sum += value;
+      if (cam.quality.previous) motion += Math.abs(value - cam.quality.previous[j]);
+      if (j % w) edge += Math.abs(value - luma[j - 1]);
+      if (j >= w) edge += Math.abs(value - luma[j - w]);
+    }
+    const brightness = sum / luma.length;
+    const sharpness = edge / (luma.length * 2);
+    motion /= luma.length;
+    const changed = cam.quality.previous && motion >= MOTION_RESET_THRESHOLD;
+    cam.quality.previous = luma;
+    cam.quality.brightness = brightness;
+    cam.quality.sharpness = sharpness;
+
+    if (changed) {
+      // 新信封已經進框：所有舊 OCR 回應和舊投票都不能再顯示。
+      beginNextEnvelope('偵測到下一封，等待畫面穩定…');
+    }
+
+    const usableLight = brightness >= MIN_BRIGHTNESS && brightness <= MAX_BRIGHTNESS;
+    const usableFocus = sharpness >= MIN_SHARPNESS;
+    const stable = !changed && motion < MOTION_RESET_THRESHOLD * 0.55;
+    cam.quality.stableFrames = stable ? cam.quality.stableFrames + 1 : 0;
+    cam.quality.ready = usableLight && usableFocus && cam.quality.stableFrames >= 2;
+
+    if (cam.busy || $('#liveMatch').classList.contains('is-hit')) return;
+    if (brightness < MIN_BRIGHTNESS) showLiveScanning('光線不足，可開啟補光');
+    else if (brightness > MAX_BRIGHTNESS) showLiveScanning('反光太強，請稍微調整角度');
+    else if (!usableFocus) showLiveScanning('請靠近並停穩，等待對焦…');
+    else if (!cam.quality.ready) showLiveScanning('畫面穩定中…');
+    else showLiveScanning('已對焦，正在自動辨識…');
   }
 
   async function startCamera() {
@@ -219,6 +291,8 @@
     cam.recentFrames = [];
     cam.confirmed.clear();
     cam.acceptedCount = 0;
+    cam.scanId += 1;
+    cam.quality = { previous: null, stableFrames: 0, ready: false, brightness: 0, sharpness: 0 };
     clearTimeout(cam.liveTimer);
     showLiveScanning();
     cam.scanning = true;
@@ -227,6 +301,7 @@
     try {
       await OCR.init((m) => setOcrStatus(`${m.status}（${m.source}）`, m.progress));
       setOcrStatus('掃描中：請把姓名放進框內', 1);
+      cam.qualityTimer = setInterval(sampleFrameQuality, QUALITY_INTERVAL_MS);
       scanLoop();
     } catch (err) {
       setOcrStatus(err.message, 0);
@@ -239,6 +314,9 @@
     cam.scanning = false;
     clearTimeout(cam.timer);
     clearTimeout(cam.liveTimer);
+    clearInterval(cam.qualityTimer);
+    cam.qualityTimer = null;
+    cam.scanId += 1; // 讓停止前仍在運算的 OCR 結果全部失效
     if (cam.stream) cam.stream.getTracks().forEach((t) => t.stop());
     cam.stream = null;
     cam.track = null;
@@ -256,9 +334,9 @@
    */
   // 手持手機快速連續掃 200~300 封信，框很難每次都對得剛剛好，
   // 留白拉大一點比較不會因為手震、信封位置偏一點就整個裁不到姓名。
-  const FRAME_PAD = 0.24;
+  const FRAME_PAD = 0.10;
 
-  function frameRect(video) {
+  function frameRect(video, pad = FRAME_PAD) {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     const stage = $('#cameraStage').getBoundingClientRect();
@@ -274,8 +352,8 @@
     let sw = frame.width / scale;
     let sh = frame.height / scale;
 
-    const padX = sw * FRAME_PAD;
-    const padY = sh * FRAME_PAD;
+    const padX = sw * pad;
+    const padY = sh * pad;
     sx -= padX; sy -= padY;
     sw += padX * 2; sh += padY * 2;
 
@@ -294,20 +372,30 @@
   async function scanOnce(manual) {
     const video = $('#video');
     if (cam.busy || !video.videoWidth) return;
+    if (!manual && !cam.quality.ready) return;
     cam.busy = true;
+    const capturedScanId = cam.scanId;
     try {
-      const canvas = OCR.preprocess(video, frameRect(video), manual ? 1900 : 1650);
-
-      // 帳單地址欄本來就是郵遞區號＋地址＋公司＋姓名連在一起的 2-3 行，
-      // 姓名常常直接黏在地址或公司名稱那一行尾端，不是獨立一行，所以主要
-      // 辨識用整段文字模式把這幾行一次讀出來。
+      // 快速路徑：裁切較緊、解析度較低。清楚的信封大多在這一步就完成。
+      let canvas = OCR.preprocess(video, frameRect(video, manual ? 0.16 : 0.08),
+        manual ? PRECISE_TARGET_WIDTH : FAST_TARGET_WIDTH);
       let { text } = await OCR.recognize(canvas, 'block');
-      let matches = matcher.find(text, { minScore: 0.55, limit: 6 });
+      if (!cam.scanning || capturedScanId !== cam.scanId) return;
+      let matches = matcher.find(text, { minScore: manual ? 0.55 : 0.60, limit: 6 });
 
-      // 沒找到才重試「單欄變動字級」模式：郵遞區號那行字級常常跟地址行不同，
-      // 只在第一次沒結果時才多花這次重試的時間，不拖慢平常的掃描節奏。
+      // 精準備援：快速路徑沒有命中才擴大裁切與解析度；此時才值得多花時間。
+      if (!matches.length) {
+        canvas = OCR.preprocess(video, frameRect(video, 0.26), PRECISE_TARGET_WIDTH);
+        const retry = await OCR.recognize(canvas, 'block');
+        if (!cam.scanning || capturedScanId !== cam.scanId) return;
+        text = retry.text;
+        matches = matcher.find(text, { minScore: 0.55, limit: 6 });
+      }
+
+      // 仍找不到才改用另一種版面模式，避免把每封信都拖進最慢的三次 OCR。
       if (!matches.length) {
         const retry = await OCR.recognize(canvas, 'column');
+        if (!cam.scanning || capturedScanId !== cam.scanId) return;
         if (retry.text.trim()) {
           text = retry.text;
           matches = matcher.find(text, { minScore: 0.55, limit: 6 });
@@ -329,7 +417,7 @@
     cam.timer = setTimeout(async () => {
       await scanOnce(false);
       scanLoop();
-    }, 350);
+    }, cam.quality.ready ? 90 : 180);
   }
 
   /**
@@ -460,6 +548,7 @@
     $('#startCamBtn').addEventListener('click', startCamera);
     $('#stopCamBtn').addEventListener('click', stopCamera);
     $('#shotBtn').addEventListener('click', manualShot);
+    $('#nextEnvelopeBtn').addEventListener('click', () => beginNextEnvelope());
     $('#photoInput').addEventListener('change', (e) => handlePhotoFile(e.target.files[0]));
 
     $('#torchBtn').addEventListener('click', async () => {
