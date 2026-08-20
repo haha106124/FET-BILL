@@ -121,9 +121,10 @@
   const CONFIRM_COOLDOWN_MS = 5000;
   // 大字結果顯示多久後自動收回、換回「正在掃描」（換下一封信前這裡一定會清空）。
   const HIT_DISPLAY_MS = 1500;
-  const FAST_TARGET_WIDTH = 1180;
+  // 大量連續掃描以速度優先；只有備援模式才拉高到較大的尺寸。
+  const FAST_TARGET_WIDTH = 920;
   const PRECISE_TARGET_WIDTH = 1800;
-  const QUALITY_INTERVAL_MS = 150;
+  const QUALITY_INTERVAL_MS = 110;
   const MOTION_RESET_THRESHOLD = 19;
   const MIN_BRIGHTNESS = 54;
   const MAX_BRIGHTNESS = 238;
@@ -142,6 +143,7 @@
     timer: null,
     qualityTimer: null,
     scanId: 0,
+    preciseAttemptId: -1,
     quality: { previous: null, stableFrames: 0, ready: false, brightness: 0, sharpness: 0 },
     torchOn: false,
   };
@@ -176,6 +178,7 @@
 
   function beginNextEnvelope(message = '等待下一封，請停穩…') {
     cam.scanId += 1;
+    cam.preciseAttemptId = -1;
     cam.recentFrames = [];
     cam.confirmed.clear();
     cam.quality.stableFrames = 0;
@@ -212,7 +215,8 @@
     const brightness = sum / luma.length;
     const sharpness = edge / (luma.length * 2);
     motion /= luma.length;
-    const changed = cam.quality.previous && motion >= MOTION_RESET_THRESHOLD;
+    const hadPreviousFrame = Boolean(cam.quality.previous);
+    const changed = hadPreviousFrame && motion >= MOTION_RESET_THRESHOLD;
     cam.quality.previous = luma;
     cam.quality.brightness = brightness;
     cam.quality.sharpness = sharpness;
@@ -224,9 +228,10 @@
 
     const usableLight = brightness >= MIN_BRIGHTNESS && brightness <= MAX_BRIGHTNESS;
     const usableFocus = sharpness >= MIN_SHARPNESS;
-    const stable = !changed && motion < MOTION_RESET_THRESHOLD * 0.55;
+    // 只需要一個短暫穩定檢查：避免「穩定中」拖太久，但仍不讀剛移入框內的信封。
+    const stable = hadPreviousFrame && !changed && motion < MOTION_RESET_THRESHOLD * 0.55;
     cam.quality.stableFrames = stable ? cam.quality.stableFrames + 1 : 0;
-    cam.quality.ready = usableLight && usableFocus && cam.quality.stableFrames >= 2;
+    cam.quality.ready = usableLight && usableFocus && cam.quality.stableFrames >= 1;
 
     if (cam.busy || $('#liveMatch').classList.contains('is-hit')) return;
     if (brightness < MIN_BRIGHTNESS) showLiveScanning('光線不足，可開啟補光');
@@ -292,6 +297,7 @@
     cam.confirmed.clear();
     cam.acceptedCount = 0;
     cam.scanId += 1;
+    cam.preciseAttemptId = -1;
     cam.quality = { previous: null, stableFrames: 0, ready: false, brightness: 0, sharpness: 0 };
     clearTimeout(cam.liveTimer);
     showLiveScanning();
@@ -383,8 +389,11 @@
       if (!cam.scanning || capturedScanId !== cam.scanId) return;
       let matches = matcher.find(text, { minScore: manual ? 0.55 : 0.60, limit: 6 });
 
-      // 精準備援：快速路徑沒有命中才擴大裁切與解析度；此時才值得多花時間。
-      if (!matches.length) {
+      // OCR 連中文字都沒讀到時，通常是信封正在移動或尚未對焦；直接等下一影格
+      // 比連跑兩次慢速模式更快。真的讀到中文但沒比對到時才進精準備援。
+      const sawChinese = /[㐀-䶿一-鿿]/.test(text);
+      if (!matches.length && (manual || (sawChinese && cam.preciseAttemptId !== capturedScanId))) {
+        cam.preciseAttemptId = capturedScanId;
         canvas = OCR.preprocess(video, frameRect(video, 0.26), PRECISE_TARGET_WIDTH);
         const retry = await OCR.recognize(canvas, 'block');
         if (!cam.scanning || capturedScanId !== cam.scanId) return;
@@ -392,8 +401,9 @@
         matches = matcher.find(text, { minScore: 0.55, limit: 6 });
       }
 
-      // 仍找不到才改用另一種版面模式，避免把每封信都拖進最慢的三次 OCR。
-      if (!matches.length) {
+      // 最慢的版面模式留給使用者按「立即辨識」時才使用；自動掃描不會為一封
+      // 讀不到的信卡住太久，下一個清楚影格能馬上接手。
+      if (!matches.length && manual) {
         const retry = await OCR.recognize(canvas, 'column');
         if (!cam.scanning || capturedScanId !== cam.scanId) return;
         if (retry.text.trim()) {
